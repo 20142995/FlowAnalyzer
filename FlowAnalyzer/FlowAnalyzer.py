@@ -13,6 +13,7 @@ from .logging_config import configure_logger
 
 logger = configure_logger("FlowAnalyzer", logging.INFO)
 
+
 class Request(NamedTuple):
     number: Optional[int]
     time_epoch: Optional[float]
@@ -20,11 +21,12 @@ class Request(NamedTuple):
     dst_ip: Optional[str]
     src_port: Optional[int]
     dst_port: Optional[int]
-    method:Optional[str]
+    method: Optional[str]
     full_uri: Optional[str]
     header: bytes
     body: bytes
-    
+
+
 class Response(NamedTuple):
     number: Optional[int]
     time_epoch: Optional[float]
@@ -32,12 +34,12 @@ class Response(NamedTuple):
     dst_ip: Optional[str]
     src_port: Optional[int]
     dst_port: Optional[int]
-    request_in:Optional[int]
-    status_code:Optional[str]
+    request_in: Optional[int]
+    status_code: Optional[str]
     full_uri: Optional[str]
     header: bytes
     body: bytes
-    
+
 
 class HttpPair(NamedTuple):
     request: Optional[Request]
@@ -70,7 +72,8 @@ class FlowAnalyzer:
             当JSON文件内容为空时抛出异常
         """
         if not os.path.exists(self.jsonPath):
-            raise FileNotFoundError("您的tshark导出的JSON文件没有找到！JSON路径：%s" % self.jsonPath)
+            raise FileNotFoundError(
+                "您的tshark导出的JSON文件没有找到！JSON路径：%s" % self.jsonPath)
 
         if os.path.getsize(self.jsonPath) == 0:
             raise ValueError("您的tshark导出的JSON文件内容为空！JSON路径：%s" % self.jsonPath)
@@ -90,7 +93,8 @@ class FlowAnalyzer:
         requests, responses = {}, {}
         for packet in data:
             packet = packet["_source"]["layers"]
-            time_epoch = float(packet["frame.time_epoch"][0]) if packet.get("frame.time_epoch") else None
+            time_epoch = float(packet["frame.time_epoch"][0]) if packet.get(
+                "frame.time_epoch") else None
 
             if packet.get("tcp.reassembled.data"):
                 full_request = packet["tcp.reassembled.data"][0]
@@ -99,21 +103,29 @@ class FlowAnalyzer:
             else:
                 # exported_pdu.exported_pdu
                 full_request = packet["exported_pdu.exported_pdu"][0]
-            
-            number = int(packet["frame.number"][0]) if packet.get("frame.number") else None
-            request_in = int(packet["http.request_in"][0]) if packet.get("http.request_in") else number
+
+            number = int(packet["frame.number"][0]) if packet.get(
+                "frame.number") else None
+            request_in = int(packet["http.request_in"][0]) if packet.get(
+                "http.request_in") else number
             request_full_uri = (
-                parse.unquote(packet["http.request.full_uri"][0]) if packet.get("http.request.full_uri") else None
+                parse.unquote(packet["http.request.full_uri"][0]) if packet.get(
+                    "http.request.full_uri") else None
             )
             response_full_uri = (
-                parse.unquote(packet["http.response_for.uri"][0]) if packet.get("http.response_for.uri") else None
+                parse.unquote(packet["http.response_for.uri"][0]) if packet.get(
+                    "http.response_for.uri") else None
             )
             src_ip = packet["ip.src"][0] if packet.get("ip.src") else None
             dst_ip = packet["ip.dst"][0] if packet.get("ip.dst") else None
-            src_port = int(packet["tcp.srcport"][0]) if packet.get("tcp.srcport") else None
-            dst_port = int(packet["tcp.dstport"][0]) if packet.get("tcp.dstport") else None
-            method = packet["http.request.method"][0] if packet.get("http.request.method") else None
-            status_code = packet["http.response.code"][0] if packet.get("http.response.code") else None
+            src_port = int(packet["tcp.srcport"][0]) if packet.get(
+                "tcp.srcport") else None
+            dst_port = int(packet["tcp.dstport"][0]) if packet.get(
+                "tcp.dstport") else None
+            method = packet["http.request.method"][0] if packet.get(
+                "http.request.method") else None
+            status_code = packet["http.response.code"][0] if packet.get(
+                "http.response.code") else None
             header, body = self.extract_http_body(full_request)
 
             if packet.get("http.response_number"):
@@ -132,20 +144,21 @@ class FlowAnalyzer:
                 )
             else:
                 requests[number] = Request(
-                    number=number, 
-                    time_epoch=time_epoch, 
+                    number=number,
+                    time_epoch=time_epoch,
                     src_ip=src_ip,
                     dst_ip=dst_ip,
                     src_port=src_port,
                     dst_port=dst_port,
                     method=method,
                     full_uri=request_full_uri,
-                    header=header, 
-                    body=body, 
+                    header=header,
+                    body=body,
                 )
         return requests, responses
 
-    def generate_http_dict_pairs(self) -> Iterable[HttpPair]:  # sourcery skip: use-named-expression
+    # sourcery skip: use-named-expression
+    def generate_http_dict_pairs(self) -> Iterable[HttpPair]:
         """生成HTTP请求和响应信息的字典对
         Yields
         ------
@@ -198,9 +211,10 @@ class FlowAnalyzer:
             '-e http.response_for.uri '
             '> output.json'.format(
                 fileName, display_filter
-        ))
+            ))
         print(command)
-        _, stderr = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=tshark_workDir).communicate()
+        _, stderr = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, cwd=tshark_workDir).communicate()
         if stderr != b"" and b"WARNING" not in stderr:
             print(f"[Waring/Error]: {stderr}")
 
@@ -237,15 +251,16 @@ class FlowAnalyzer:
             if data[0].get('MD5Sum') == MD5Sum:
                 logger.debug("匹配HASH校验无误，自动返回Json文件路径!")
                 return jsonWordPath
-        FlowAnalyzer.extract_json_file(fileName, display_filter, tshark_workDir)
+        FlowAnalyzer.extract_json_file(
+            fileName, display_filter, tshark_workDir)
 
         if tshark_jsonPath != jsonWordPath:
             shutil.move(tshark_jsonPath, jsonWordPath)
-        
+
         with open(jsonWordPath, "r", encoding="utf-8") as f:
             data = json.load(f)
         data[0]['MD5Sum'] = MD5Sum
-        
+
         with open(jsonWordPath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         return jsonWordPath
@@ -278,15 +293,16 @@ class FlowAnalyzer:
         """
         chunks = []
         chunkSizeEnd = body.find(b"\n") + 1
-        lineEndings = b"\r\n" if bytes([body[chunkSizeEnd - 2]]) == b"\r" else b"\n"
+        lineEndings = b"\r\n" if bytes(
+            [body[chunkSizeEnd - 2]]) == b"\r" else b"\n"
         lineEndingsLength = len(lineEndings)
         while True:
             chunkSize = int(body[:chunkSizeEnd], 16)
             if not chunkSize:
                 break
 
-            chunks.append(body[chunkSizeEnd : chunkSize + chunkSizeEnd])
-            body = body[chunkSizeEnd + chunkSize + lineEndingsLength :]
+            chunks.append(body[chunkSizeEnd: chunkSize + chunkSizeEnd])
+            body = body[chunkSizeEnd + chunkSize + lineEndingsLength:]
             chunkSizeEnd = body.find(lineEndings) + lineEndingsLength
         return b"".join(chunks)
 
