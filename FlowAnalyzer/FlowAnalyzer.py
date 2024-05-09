@@ -14,20 +14,30 @@ from .logging_config import configure_logger
 logger = configure_logger("FlowAnalyzer", logging.INFO)
 
 class Request(NamedTuple):
-    frame_num: Optional[int]
-    header: bytes
-    file_data: bytes
+    number: Optional[int]
+    time_epoch: Optional[float]
+    src_ip: Optional[str]
+    dst_ip: Optional[str]
+    src_port: Optional[int]
+    dst_port: Optional[int]
+    method:Optional[str]
     full_uri: Optional[str]
-    time_epoch: Optional[float]
-
-
-class Response(NamedTuple):
-    frame_num: Optional[int]
     header: bytes
-    file_data: bytes
-    request_in: Optional[int]
+    body: bytes
+    
+class Response(NamedTuple):
+    number: Optional[int]
     time_epoch: Optional[float]
-
+    src_ip: Optional[str]
+    dst_ip: Optional[str]
+    src_port: Optional[int]
+    dst_port: Optional[int]
+    request_in:Optional[int]
+    status_code:Optional[str]
+    full_uri: Optional[str]
+    header: bytes
+    body: bytes
+    
 
 class HttpPair(NamedTuple):
     request: Optional[Request]
@@ -90,25 +100,48 @@ class FlowAnalyzer:
                 # exported_pdu.exported_pdu
                 full_request = packet["exported_pdu.exported_pdu"][0]
             
-            frame_num = int(packet["frame.number"][0]) if packet.get("frame.number") else None
-            request_in = int(packet["http.request_in"][0]) if packet.get("http.request_in") else frame_num
-            full_uri = (
+            number = int(packet["frame.number"][0]) if packet.get("frame.number") else None
+            request_in = int(packet["http.request_in"][0]) if packet.get("http.request_in") else number
+            request_full_uri = (
                 parse.unquote(packet["http.request.full_uri"][0]) if packet.get("http.request.full_uri") else None
             )
-
-            header, file_data = self.extract_http_file_data(full_request)
+            response_full_uri = (
+                parse.unquote(packet["http.response_for.uri"][0]) if packet.get("http.response_for.uri") else None
+            )
+            src_ip = packet["ip.src"][0] if packet.get("ip.src") else None
+            dst_ip = packet["ip.dst"][0] if packet.get("ip.dst") else None
+            src_port = int(packet["tcp.srcport"][0]) if packet.get("tcp.srcport") else None
+            dst_port = int(packet["tcp.dstport"][0]) if packet.get("tcp.dstport") else None
+            method = packet["http.request.method"][0] if packet.get("http.request.method") else None
+            status_code = packet["http.response.code"][0] if packet.get("http.response.code") else None
+            header, body = self.extract_http_body(full_request)
 
             if packet.get("http.response_number"):
-                responses[frame_num] = Response(
-                    frame_num=frame_num,
-                    request_in=request_in,
-                    header=header,
-                    file_data=file_data,
+                responses[number] = Response(
+                    number=number,
                     time_epoch=time_epoch,
+                    src_ip=src_ip,
+                    dst_ip=dst_ip,
+                    src_port=src_port,
+                    dst_port=dst_port,
+                    request_in=request_in,
+                    status_code=status_code,
+                    full_uri=response_full_uri,
+                    header=header,
+                    body=body,
                 )
             else:
-                requests[frame_num] = Request(
-                    frame_num=frame_num, header=header, file_data=file_data, time_epoch=time_epoch, full_uri=full_uri
+                requests[number] = Request(
+                    number=number, 
+                    time_epoch=time_epoch, 
+                    src_ip=src_ip,
+                    dst_ip=dst_ip,
+                    src_port=src_port,
+                    dst_port=dst_port,
+                    method=method,
+                    full_uri=request_full_uri,
+                    header=header, 
+                    body=body, 
                 )
         return requests, responses
 
@@ -144,10 +177,10 @@ class FlowAnalyzer:
     @staticmethod
     def extract_json_file(fileName: str, display_filter: str, tshark_workDir: str) -> None:
         # sourcery skip: replace-interpolation-with-fstring, use-fstring-for-formatting
-        # tshark -r {} -Y "{}" -T json -e http.request_number -e http.response_number -e http.request_in -e tcp.reassembled.data -e frame.number -e tcp.payload -e frame.time_epoch -e http.request.full_uri > output.json
+        # tshark -r {} -Y "{}" -T json -e http.number -e http.response_number -e http.request_in -e tcp.reassembled.data -e frame.number -e tcp.payload -e frame.time_epoch -e http.request.full_uri > output.json
         command = (
             'tshark -r {} -Y "(tcp.reassembled_in) or ({})" -T json '
-            '-e http.request_number '
+            '-e http.number '
             '-e http.response_number '
             '-e http.request_in '
             '-e tcp.reassembled.data '
@@ -156,9 +189,17 @@ class FlowAnalyzer:
             '-e frame.time_epoch '
             '-e exported_pdu.exported_pdu '
             '-e http.request.full_uri '
+            '-e ip.src '
+            '-e ip.dst '
+            '-e tcp.srcport '
+            '-e tcp.dstport '
+            '-e http.request.method '
+            '-e http.response.code '
+            '-e http.response_for.uri '
             '> output.json'.format(
                 fileName, display_filter
         ))
+        print(command)
         _, stderr = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=tshark_workDir).communicate()
         if stderr != b"" and b"WARNING" not in stderr:
             print(f"[Waring/Error]: {stderr}")
@@ -209,25 +250,25 @@ class FlowAnalyzer:
             json.dump(data, f, indent=2)
         return jsonWordPath
 
-    def Split_HTTP_headers(self, file_data: bytes) -> Tuple[bytes, bytes]:
+    def Split_HTTP_headers(self, body: bytes) -> Tuple[bytes, bytes]:
         # sourcery skip: use-named-expression
-        headerEnd = file_data.find(b"\r\n\r\n")
+        headerEnd = body.find(b"\r\n\r\n")
         if headerEnd != -1:
             headerEnd += 4
-            return file_data[:headerEnd], file_data[headerEnd:]
-        elif file_data.find(b"\n\n") != -1:
-            headerEnd = file_data.index(b"\n\n") + 2
-            return file_data[:headerEnd], file_data[headerEnd:]
+            return body[:headerEnd], body[headerEnd:]
+        elif body.find(b"\n\n") != -1:
+            headerEnd = body.index(b"\n\n") + 2
+            return body[:headerEnd], body[headerEnd:]
         else:
             print("[Warning] 没有找到headers和response的划分位置!")
-            return b"", file_data
+            return b"", body
 
-    def Dechunck_HTTP_response(self, file_data: bytes) -> bytes:
+    def Dechunck_HTTP_response(self, body: bytes) -> bytes:
         """解码分块TCP数据
 
         Parameters
         ----------
-        file_data : bytes
+        body : bytes
             已经切割掉headers的TCP数据
 
         Returns
@@ -236,20 +277,20 @@ class FlowAnalyzer:
             解码分块后的TCP数据
         """
         chunks = []
-        chunkSizeEnd = file_data.find(b"\n") + 1
-        lineEndings = b"\r\n" if bytes([file_data[chunkSizeEnd - 2]]) == b"\r" else b"\n"
+        chunkSizeEnd = body.find(b"\n") + 1
+        lineEndings = b"\r\n" if bytes([body[chunkSizeEnd - 2]]) == b"\r" else b"\n"
         lineEndingsLength = len(lineEndings)
         while True:
-            chunkSize = int(file_data[:chunkSizeEnd], 16)
+            chunkSize = int(body[:chunkSizeEnd], 16)
             if not chunkSize:
                 break
 
-            chunks.append(file_data[chunkSizeEnd : chunkSize + chunkSizeEnd])
-            file_data = file_data[chunkSizeEnd + chunkSize + lineEndingsLength :]
-            chunkSizeEnd = file_data.find(lineEndings) + lineEndingsLength
+            chunks.append(body[chunkSizeEnd : chunkSize + chunkSizeEnd])
+            body = body[chunkSizeEnd + chunkSize + lineEndingsLength :]
+            chunkSizeEnd = body.find(lineEndings) + lineEndingsLength
         return b"".join(chunks)
 
-    def extract_http_file_data(self, full_request: str) -> Tuple[bytes, bytes]:
+    def extract_http_body(self, full_request: str) -> Tuple[bytes, bytes]:
         """提取HTTP请求或响应中的文件数据
 
         Parameters
@@ -260,14 +301,14 @@ class FlowAnalyzer:
         Returns
         -------
         tuple
-            包含header和file_data的元组
+            包含header和body的元组
         """
-        header, file_data = self.Split_HTTP_headers(bytes.fromhex(full_request))
+        header, body = self.Split_HTTP_headers(bytes.fromhex(full_request))
 
         with contextlib.suppress(Exception):
-            file_data = self.Dechunck_HTTP_response(file_data)
+            body = self.Dechunck_HTTP_response(body)
 
         with contextlib.suppress(Exception):
-            if file_data.startswith(b"\x1F\x8B"):
-                file_data = gzip.decompress(file_data)
-        return header, file_data
+            if body.startswith(b"\x1F\x8B"):
+                body = gzip.decompress(body)
+        return header, body
