@@ -193,7 +193,7 @@ class FlowAnalyzer:
         # tshark -r {} -Y "{}" -T json -e http.number -e http.response_number -e http.request_in -e tcp.reassembled.data -e frame.number -e tcp.payload -e frame.time_epoch -e http.request.full_uri > output.json
         command = (
             'tshark -r {} -Y "(tcp.reassembled_in) or ({})" -T json '
-            '-e http.number '
+            '-e http.request_number '
             '-e http.response_number '
             '-e http.request_in '
             '-e tcp.reassembled.data '
@@ -212,7 +212,6 @@ class FlowAnalyzer:
             '> output.json'.format(
                 fileName, display_filter
             ))
-        print(command)
         _, stderr = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, cwd=tshark_workDir).communicate()
         if stderr != b"" and b"WARNING" not in stderr:
